@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>9GRadio companion</title>
+<style>
+  :root { color-scheme: dark; --bg:#0d1117; --card:#161b22; --line:#30363d; --fg:#e6edf3; --dim:#8b949e; --ok:#3fb950; --warn:#d29922; --bad:#f85149; --acc:#58a6ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p.sub { color: var(--dim); margin: 0 0 20px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  h2 { font-size: 15px; margin: 0 0 8px; }
+  button { background: var(--acc); color: #04122b; border: 0; border-radius: 8px; padding: 8px 14px; font-weight: 600; cursor: pointer; }
+  input { background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; width: 110px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .out { margin-top: 10px; color: var(--dim); min-height: 1.4em; word-break: break-word; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+  ul { list-style: none; padding: 0; margin: 8px 0 0; }
+  li { padding: 8px 0; border-top: 1px solid var(--line); }
+  code { background: var(--bg); padding: 1px 6px; border-radius: 6px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>9GRadio companion</h1>
+  <p class="sub">Helps a 9GRadio in <b>Server</b> mode become reachable from the internet. Nothing is stored except the list of radios that chose to be listed.</p>
+
+  <section>
+    <h2>Your public address</h2>
+    <div class="row"><button id="who">Check</button></div>
+    <div class="out" id="whoOut"></div>
+  </section>
+
+  <section>
+    <h2>Can a controller reach my radio?</h2>
+    <div class="row"><label>Port <input id="port" type="number" min="1024" max="65535" value="7664"></label><button id="probe">Test connection</button></div>
+    <div class="out" id="probeOut">Run this from the network your radio is on, with the app in Server mode.</div>
+  </section>
+
+  <section>
+    <h2>Radios on air</h2>
+    <div class="row"><button id="list">Refresh</button></div>
+    <ul id="radios"></ul>
+  </section>
+</main>
+<script>
+(function () {
+  'use strict';
+  var base = null;
+  function $(id) { return document.getElementById(id); }
+  function getJson(url, ms) {
+    var ctl = new AbortController();
+    var t = setTimeout(function () { ctl.abort(); }, ms || 10000);
+    return fetch(url, { signal: ctl.signal, cache: 'no-store' }).then(function (r) { clearTimeout(t); return r.json(); });
+  }
+  // Same-origin API first (Cloudflare Worker deployment), then config.json (static hosting, e.g. GitHub Pages).
+  function api() {
+    if (base !== null) return Promise.resolve(base);
+    return getJson('api/whoami', 5000).then(function (j) { if (j && j.ip) return (base = 'api'); throw 0; })
+      .catch(function () {
+        return getJson('config.json', 5000).then(function (c) {
+          var a = c && typeof c.api === 'string' && /^https:\/\/[^\s\/]+$/.test(c.api) ? c.api : '';
+          return (base = a ? a + '/api' : '');
+        }, function () { return (base = ''); });
+      });
+  }
+  function say(el, text, cls) { el.className = 'out ' + (cls || ''); el.textContent = text; }
+
+  $('who').onclick = function () {
+    api().then(function (b) {
+      if (!b) return say($('whoOut'), 'No companion server is configured.', 'bad');
+      return getJson(b + '/whoami').then(function (j) {
+        say($('whoOut'), 'IPv' + j.version + ' ' + j.ip + (j.version === 6 ? '  (the radio is reached over IPv4 — use an IPv4 network for the test)' : ''), j.version === 6 ? 'warn' : 'ok');
+      });
+    }).catch(function () { say($('whoOut'), 'Could not reach the companion server.', 'bad'); });
+  };
+
+  $('probe').onclick = function () {
+    var port = parseInt($('port').value, 10);
+    if (!(port >= 1024 && port <= 65535)) return say($('probeOut'), 'Enter a port from 1024 to 65535.', 'bad');
+    say($('probeOut'), 'Connecting back to your address…');
+    api().then(function (b) {
+      if (!b) return say($('probeOut'), 'No companion server is configured.', 'bad');
+      return getJson(b + '/probe?port=' + port, 15000).then(function (j) {
+        if (!j.ok) return say($('probeOut'), j.error || 'The test failed.', 'bad');
+        if (j.reachable && j.station) say($('probeOut'), 'Reachable. A 9GRadio answered' + (j.stationName ? ' as “' + j.stationName + '”.' : '.'), 'ok');
+        else if (j.reachable) say($('probeOut'), 'The port is open, but what answered is not a 9GRadio in Server mode.', 'warn');
+        else say($('probeOut'), 'Not reachable (' + j.reason + '). Controllers can still connect through the relay if Internet access is on in the app.', 'warn');
+      });
+    }).catch(function () { say($('probeOut'), 'The test could not run.', 'bad'); });
+  };
+
+  $('list').onclick = function () {
+    var ul = $('radios');
+    ul.textContent = '';
+    api().then(function (b) {
+      if (!b) throw 0;
+      return getJson(b + '/radios');
+    }).then(function (j) {
+      var list = (j && j.radios) || [];
+      if (!list.length) { var e = document.createElement('li'); e.textContent = 'Nobody is on air right now.'; ul.appendChild(e); return; }
+      list.forEach(function (r) {
+        var li = document.createElement('li');
+        var b = document.createElement('b'); b.textContent = r.name || 'Radio';
+        var s = document.createElement('div'); s.style.color = 'var(--dim)';
+        s.textContent = (r.relay ? 'via relay' : (r.host + ':' + r.port)) + ' · ' + (r.ageSeconds || 0) + ' s ago';
+        li.appendChild(b); li.appendChild(s); ul.appendChild(li);
+      });
+    }).catch(function () { var e = document.createElement('li'); e.textContent = 'The directory is not available.'; ul.appendChild(e); });
+  };
+})();
+</script>
+</body>
+</html>
