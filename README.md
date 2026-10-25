@@ -7,7 +7,7 @@ the **RTL-SDR V4** dongle family (RTL2832U + R828D or R828S, 28.8 MHz TCXO) — 
 FC2580), auto-identified the same way as the V4/V4L: no manual model selection needed.
 
 **Package:** `com.radiosport.ninegradio`  
-**Version:** 1.74
+**Version:** 1.81
 
 ---
 
@@ -245,7 +245,7 @@ across stations, the same principle real-world ADS-B MLAT networks use.
   radio ID) is what lets multiple stations recognize they've heard the *same* transmission and
   contribute it to the same fix, no manual coordination required. Analog voice/AM/FM (no
   decodable identity) is also supported on a best-effort basis, keyed by carrier-onset timing on
-  a shared tuned frequency. POCSAG/FLEX paging is intentionally excluded — pagers are fixed
+  a shared tuned frequency. Paging (FLEX) is intentionally excluded — pagers are fixed
   infrastructure, so locating them adds nothing.
 - **Own GPS position** pulled automatically from the device's location provider — nothing to
   enter manually, and a moved/newly-set-up receiver never contributes a stale position by
@@ -383,8 +383,9 @@ better fix.
 - **FFT sizes**: 256 – 8192 points
 - **FFT decimation**: Off / ÷2 / ÷4 / ÷8 / ÷16 / ÷32 / ÷64, narrowing the analysis bandwidth for
   a sharper, lower-noise view of narrowband signals
-- **Frame averaging**: Off / ×2 / ×4 / ×8 / ×16 / ×32 (N-frame linear-power accumulation, reduces
-  the displayed noise floor by up to ~15 dB)
+- **Frame averaging**: Off / ×2 / ×4 / ×8 / ×16 / ×32 / ×64 (running N-frame linear-power average,
+  reduces the displayed noise floor by up to ~15 dB; the trace updates every frame, so ×64 is as
+  smooth to watch as ×8, just slower to follow signal changes)
 - **Intelligent per-protocol auto-configuration**: the first time a mode is selected, FFT size
   (2048), frame averaging (×8), and a protocol-appropriate decimation factor are seeded
   automatically — e.g. CW/CWR ÷64, USB/LSB and NFM ÷32, AM and APRS ÷16, DMR/YSF/D-STAR ÷8,
@@ -467,9 +468,39 @@ display or RF settings from scratch.
 - Export / import settings as JSON
 - Per-feature category organisation
 
+### Update Notifications
+- **Check for new version** (Settings → Misc, on by default) looks at this repository's **Latest** GitHub release
+  (`/releases/latest`) and, if it is newer than the installed build, shows a small translucent pop-up under the tool bar.
+  Tap it to download and install the release APK (or to open the release page when it has none); swipe it away in either
+  direction to dismiss it — it is not shown again for that release, only for a newer one.
+- While the update downloads, the pop-up shows a **progress bar** with the live percentage where the UPDATE button was.
+  The bar animates until the first figure arrives (or if the size is unknown) and dims with "Waiting for network…"
+  while the system holds the download (no connection, waiting for Wi-Fi). The figures are read from the system
+  DownloadManager on a background-priority thread, only while the app is on screen; screen readers hear 25 % milestones
+  rather than every change. Android's own download notification still appears as well.
+- Stays out of the radio's way: it only looks while the app is open on screen (no background job, alarm or service), about
+  45 s after start-up and at most once a day, with one small request on its own lowest-priority thread; a failed look is
+  retried after an hour. It stands down only with no connection, or on a metered connection under Data Saver, and tries
+  again at the next launch; **Battery Saver does not stop it** (one small request a day, made only while the app is open).
+  Switch it off in Settings and nothing is ever requested.
+- The version is read from the release tag (`9GRadio_v1.77`), else its title, else the APK file name, so any tag style
+  works. If GitHub's API refuses (its anonymous limit is per IP address) the `releases/latest` redirect is used instead.
+- The APK is only ever fetched from this repository's release downloads, downloaded by Android's DownloadManager, and
+  checked (size, that it is 9GRadio, that its versionCode is higher) before the system installer is opened; Android still
+  requires it to carry the same signing key. The first time, Android asks you to allow 9GRadio to install apps.
+
 ### Diagnostics
 - **Debug Panel**: live per-stage health monitor for the full RTL-SDR → DSP → Audio/Waterfall/
   Spectrum pipeline, plus live DSP metrics and audio routing status
+- **Native (C++) vs Kotlin visibility**: the Debug Panel reports, per JNI library, whether it is
+  loaded and running right now, and for every accelerated DSP kernel whether the C++ or the Kotlin
+  fallback implementation is actually executing (call counts and average time)
+- **Noise Reduction Performance tile**: live per-frame cost of the STFT noise reducer, real-time
+  budget/headroom and CPU share, worst-case frame time, and an on-demand C++ vs Kotlin benchmark
+- **Update Check tile**: a brief report on the last "Check for new version" look: when it ran (also if it was skipped
+  or failed), what it meant for this build, where the answer came from (GitHub API, an unchanged `304`, or the
+  `releases/latest` redirect fallback) with its HTTP status and duration, installed vs latest known version, whether
+  the pop-up is showing or was swiped away, and when the next look is due. Read-only: opening the page never causes a request
 - **RTL-SDR Test Activity**: standalone USB/tuner connectivity and register-level test screen
 
 ### Background Operation
@@ -507,7 +538,159 @@ so it works with any server implementing that protocol, not just RTL-SDR Blog's 
 - Once actually connected via **🌐 Connect**, the same throughput readout switches to a live,
   continuously-updating measurement instead of a one-off test.
 
-### Rig Control (Hamlib `rigctld`-compatible server)
+### 9G Control — controlling one 9GRadio from another
+9GRadio can be fully remote controlled by another 9GRadio device. Put the RTL-SDR on one phone or tablet, leave it
+somewhere with a good antenna, and operate it from a second device — in the next room, across town or on the other
+side of the world — as if the radio were in your hand. (In the app, find it under **Settings → 9G Control**.)
+
+**The two roles**
+- **Server** — set 9G Control to **Server** on the device that is connected to the RTL-SDR. This is the radio. It does
+  the receiving and decoding, and shares everything with the devices that control it.
+- **Client** — set 9G Control to **Client** on the device that will act as the remote / controller. It shows you the
+  radio's screen and sends your commands to it.
+- **Off** — 9G Control does nothing. The device is not visible to others and there is no chat.
+
+**Getting started**
+1. On the radio device, open **Settings → 9G Control** and choose **Server**. The app creates an **access code** —
+   tap **Show** to read it. Anyone who has this code can control your radio, so treat it like a password.
+2. On the controller, choose **Client**. Radios on the same Wi-Fi appear in the list within a few seconds.
+3. Tap **Connect** and type in the access code. The controller can remember it, so you only enter it once.
+4. That's it. Tuning, mode, gain and every other normal control now work on the remote radio. Tap **Disconnect**
+   at any time to get your own receiver back exactly as you left it.
+
+**What you can do from the controller**
+- Tune the radio, change mode and bandwidth, adjust gain and AGC, noise reduction and filters, squelch and other
+  receiver settings — every ordinary control in the app drives the remote radio.
+- Start and stop the radio's audio and recordings.
+- Use the specialist screens on the remote radio: the Channel Monitor, the APRS and ACARS monitors, satellite
+  tracking and the decoder tabs.
+
+**What comes back to you**
+- The radio's live **spectrum and waterfall**, signal meters and settings, exactly as the radio sees them.
+- The radio's **sound**, playing on the controller.
+- Everything the radio **decodes**: aircraft and ship positions, radio text, digital voice, APRS and ACARS messages
+  and more, filled in on the controller's own tabs.
+- **Satellite pictures** (SSTV and weather-satellite images) as the radio receives them. A controller that joins in the
+  middle of a pass is caught up automatically.
+
+**Several controllers at once**
+One radio can be controlled by up to **4 devices at the same time**. Each one gets its own live spectrum, sound and
+decoded data, and all of them can send commands, so agree who is doing what (the group chat is handy for that).
+A fifth device is told the radio has too many controllers connected and can join as soon as one of the four
+disconnects. The limit is deliberately cautious: the radio is a phone that is also busy receiving, and every
+controller adds its own share of work and data traffic. A controller on a slow connection loses a little picture or
+sound rather than slowing anyone else down.
+
+**Near or far**
+- **Same Wi-Fi** — nothing to set up. Radios find each other by themselves.
+- **Other networks** — if you know where the radio is, you can connect to it directly, or share a **join link** from the
+  radio (the access code is deliberately never inside the link).
+- **Anywhere on the internet** — turn on **Internet access** on both devices. It is off by default, so everything stays
+  on your own network unless you choose otherwise.
+
+**Group chat**
+While 9G Control is set to Server or Client, a chat button appears on the main screen, with a badge for unread
+messages. Everyone connected can talk to each other — useful for sharing what you are hearing or for taking turns
+at the controls. Chat history is kept between sessions. Chat messages are not private in the way a control session is,
+so don't put anything confidential in them.
+
+**Safe and private**
+- 9G Control is built to be **secure over the internet** as well as on your own network (see the comparison below).
+- A radio with no access code refuses everyone, so nobody can get in by accident.
+- The access code is never sent over the air. The devices prove to each other that they know it, which also confirms
+  you are talking to your own radio and not an impostor.
+- Everything between the radio and its controllers is scrambled so nobody on the way can listen in or change
+  anything — including over the internet.
+- Repeated wrong codes slow a would-be intruder down more and more.
+- If a code gets out, choose **Make a new code** on the radio: everyone connected is disconnected and needs the new one.
+
+**Good to know**
+- Keep 9GRadio running on the Server device. It keeps the receiver going in the background, but if the app is closed
+  or the phone is switched off, the controllers lose the radio.
+- Your controller's own memory channels, bookmarks and decoder windows stay on that device. Tuning to one simply sends
+  that frequency to the radio.
+- The frequency scanner runs only on the device it was started on; it isn't mirrored to controllers.
+- On a remote radio, APRS watches one channel rather than both the North American and European channels at once.
+- When you disconnect, the controller goes back to its own settings and its own receiver.
+
+### 9G Control vs Rig Control (Hamlib rigctld)
+9GRadio has two different ways to be controlled remotely. They are **not** equally safe, so it is worth knowing which is which.
+
+| | **9G Control** | **Rig Control (Hamlib rigctld)** |
+|---|---|---|
+| What it is | One 9GRadio controls another 9GRadio | PC software (WSJT-X, JTDX, fldigi, Gqrx, SDR++, `rigctl`) tunes your 9GRadio |
+| Access code | **Required** — a radio with no code refuses everyone | **None** — anyone who can reach it can use it |
+| Encrypted | **Yes** — everything between the radio and its controllers is scrambled | **No** — plain, unprotected traffic |
+| Safe over the internet | ✅ **Yes** — designed for it (turn on **Internet access**) | ❌ **No** — never expose it to the internet |
+| Where to use it | Same Wi-Fi, or anywhere in the world | **Your own local network (LAN) only** |
+
+- **9G Control is secure for use over the internet.** Only devices that know the access code can connect, and nobody on the
+  way can listen in or change anything.
+- **Rig Control (Hamlib rigctld) is for local network (LAN) use only.** It follows the standard Hamlib `rigctld` design, which has
+  no login and no encryption, so run it only on a network you trust (for example your home Wi-Fi), and switch it
+  off when you are not using it. Do not forward its port on your router or otherwise make it reachable from the internet.
+
+### 9G Control — remote control of one 9GRadio by another (Off / Server / Client)
+**Settings → 9G Control** has one master switch with three states:
+
+| Mode | What this device does |
+|---|---|
+| **Off** | Nothing. Not on the network, no chat. |
+| **Server** | This device holds the radio. Another 9GRadio can find it and — with its access code — **fully control it**: frequency, mode, sample rate, gain/AGC, bias-tee, noise blanker/reducer, IF bandwidth, direct sampling, PPM, squelch, FFT size/decimation, and starting/stopping audio and IQ recording on the radio. It also streams its **spectrum/waterfall, meters, demodulated audio and decoded data** (RDS, AIS, ADS-B, ACARS, APRS, DMR/P25/D-STAR/YSF/NXDN/M17…) to the controller. |
+| **Client** | This device controls another 9GRadio. Pick a radio in the list and connect: from then on **every ordinary control in the app drives the remote radio**, the spectrum, waterfall, S-meter, settings and **decoder tables (AIS, ADS-B, DMR, RDS…)** shown are the remote radio's, and its audio plays here. Your own settings are put back when you disconnect. |
+
+- **Finding each other (the mesh).** Radios and controllers form a peer-to-peer mesh ported from
+  9GSound: UDP LAN beacons, a bounded parallel subnet sweep (which also works across VPN
+  tunnels such as ZeroTier), manual **Connect by address**, and shareable `ninegradio://join` links
+  (**Share join link** on a radio — the access code is deliberately *not* in the link). Radios on the same
+  Wi-Fi appear in the Client's list within seconds with no setup.
+- **Over the internet (optional).** Turn on **Internet access** and a Server
+  opens a router port (UPnP / NAT-PMP / PCP), lists itself in a small live directory once a
+  connect-back check has confirmed a 9GRadio answers, and — where the network can't accept inbound
+  connections (carrier-grade NAT, mobile data) — is reached through a relay it dials *out* to. Clients
+  see directory radios in the same list. Off by default.
+- **Several controllers at once.** One radio can be controlled by up to **4 devices at the same time**, each with its
+  own live spectrum, waterfall, audio and decoder data. A fifth device is told the radio has too many controllers
+  connected and can join as soon as one of the four disconnects. The limit is deliberately cautious rather than a
+  measured ceiling: the radio is a phone that is also running the receiver, and every controller adds its own
+  encrypted stream, picture transfers and Wi-Fi or mobile-data traffic. The spectrum is prepared once and shared, and a
+  controller on a slow connection simply loses some picture and sound instead of slowing the others.
+- **Security.** A Server with no access code refuses everyone. The code is 12 random characters (60 bits),
+  shown once in the app, stored Keystore-encrypted, and never sent: the controller proves it knows it with a
+  salted PBKDF2 challenge/response that also proves the radio to the controller (no impostor radio), after
+  which **every frame is AES-256-GCM encrypted and replay-protected** — so neither a relay
+  nor anyone on the path can read or alter a session. Wrong codes are throttled per source (4 free
+  tries, then 30 s doubling to 15 min). A controller saves a radio's code (encrypted) to reconnect by itself.
+  *Make a new code* in the Server section cuts off everyone connected. Anyone who has the code controls the
+  radio, so share it like a password.
+- **Group chat.** Whenever 9G Control is Server or Client, a chat button appears on the main screen
+  (with an unread badge) that opens the same conversation screen as 9GSound: grouped bubbles, day
+  separators, long-press to copy or mute a person, rate limiting, history that survives restarts, and
+  honest "nobody was linked" marking. Messages flood across the mesh (6 hops, de-duplicated) and are not
+  end-to-end encrypted.
+- **Limits worth knowing.** A radio serves up to 4 controllers at once; all may issue commands (use the chat
+  to coordinate). A mode a controller picks is applied on the radio exactly as a tap on its own mode chips (an open EiBi/Sat tab closes, the protocol's tab opens, and the screen moves off a protocol tab that has just closed). Memory channels, bookmarks and decoder windows remain local to each device — tuning
+  from them is sent to the radio like any other tune. Decoded protocol data is mirrored (the radio decodes,
+  the controller's AIS/ADS-B/ACARS/APRS/RDS/digital-voice tabs show the results — sent in batches, and only
+  while the matching mode is selected). The standalone **APRS Monitor** and **ACARS Monitor** screens work
+  against a remote radio too: they tune it, show its signal state and list what it decodes (APRS is
+  single-channel on a remote radio — the NA+EU dual-watch needs raw audio for two channels, which stays on
+  the radio). **SSTV and LRPT satellite images** are decoded on the radio and rebuilt on the controller: the
+  radio sends only the picture rows a controller does not have yet, compressed, so a controller that joins
+  mid-pass is caught up and one that is current costs nothing; the SSTV/LRPT tabs appear on the controller
+  when the radio is on a satellite frequency or in those modes. The **DMR slot buttons** (Auto / 1 / 2 /
+  Stereo) set the radio's slot and show the radio's actual one. The **Channel Monitor** runs on the radio (it
+  reads the radio's own FFT and retunes its dongle): a controller's band chips, Pause, Close, lockouts and
+  sensitivity slider are commands to it, its Monitor tab opens on the radio's screen, and the radio's channel
+  table, active channel and thresholds are mirrored live — the controller's dial and spectrum follow the radio
+  onto each active channel, and a controller that joins a running monitor is shown it straight away. The frequency scanner still runs on the
+  radio or the local receiver only and is not mirrored. The radio side must stay running: keep 9GRadio
+  open (its foreground service keeps the receiver alive) on the Server device.
+
+### Rig Control — Hamlib `rigctld`-compatible server (local network only)
+> ⚠️ **Local network (LAN) use only.** Rig Control has no access code and no encryption. Unlike 9G Control, it is
+> **not** secure for use over the internet — see [9G Control vs Rig Control](#9g-control-vs-rig-control-hamlib-rigctld).
+
 Turns 9GRadio into a network-controllable receiver by running a small server that speaks the
 same wire protocol as Hamlib's `rigctld` — the de-facto standard most amateur radio and SDR
 software already uses to talk to a "rig." Any Hamlib-compatible program on a PC on the same
@@ -520,12 +703,12 @@ are supported.
   Control deliberately implements only the receive-relevant subset of the protocol —
   transmitter-only commands (PTT, split, TX power) are recognised so clients don't hang or
   error out, but are answered with Hamlib's own "not supported" result code.
-- **In Settings → Rig Control**: switch **Server** on, leave **Listen port** at its default
+- **In Settings → 9G Control → Rig Control (Hamlib rigctld)**: switch **Server** on, leave **Listen port** at its default
   `4532` (rigctld's own long-standing default) unless it's already in use, optionally set the
   **Jog dial step size (Hz)** for an external rotary encoder/jog-dial input, then tap **Apply**.
-  The status indicator switches to **● RUNNING** and a green **CONNECT →** row shows this
-  device's IP address and port — tap it (or its copy icon) to copy `address:port` straight to
-  the clipboard for pasting into a client.
+  The line under the switch reads **Hamlib listening on :4532**. Hamlib is independent of the
+  Off/Server/Client switch and drives whichever receiver this app is controlling — in **Client**
+  mode, WSJT-X or fldigi on a PC tunes the *remote* radio through this phone.
 - A live **Connected clients** count (updated once per second) confirms when a PC client has
   actually connected.
 - Supports both traditional single-letter Hamlib commands and their long-form `\command`
@@ -542,12 +725,12 @@ are supported.
 - An external rotary controller (jog dial via USB-serial or HID) uses the exact same underlying
   frequency-setting call as a Rig Control client's `F`/`set_freq` command, so external jog input
   and a network client always agree on one authoritative VFO.
-- Rig Control hands over frequency/mode only — it doesn't carry audio. For a fully wireless
+- The Hamlib port hands over frequency/mode only — it doesn't carry audio (the Server/Client mode above does). For a fully wireless
   setup, phone/tablet receive audio can be routed to a PC over Bluetooth (A2DP) into a virtual
   audio cable, which a program like WSJT-X or fldigi can then select as its microphone input;
   this runs entirely independently of the Rig Control TCP connection.
-- **No pairing, login, or encryption** — like upstream `rigctld` itself, Rig Control is a plain
-  unauthenticated TCP service. Only enable it on trusted networks, and turn **Server** off when
+- **No pairing, login, or encryption on the Hamlib port** — like upstream `rigctld` itself, it is a plain
+  unauthenticated TCP service (unlike the Server/Client control above, which is authenticated and encrypted). Only enable it on trusted networks, and turn **Server** off when
   not actively using it; because 9GRadio is receive-only, the worst case of an unwanted
   connection is someone else retuning your receiver.
 
@@ -758,13 +941,39 @@ cd 9GRadio
 │       │   │   ├── BeastReader.kt          # Reads readsb's Beast output for ADS-B timestamps
 │       │   │   ├── UpstreamMlatClient.kt   # Contributes ADS-B to a real public MLAT network
 │       │   │   └── GnssTimeSource.kt       # GPS-referenced timing
-│       │   ├── remote/
-│       │   │   ├── RigControlManager.kt    # Wires RigControlServer to freq/mode state
-│       │   │   └── RigControlServer.kt     # Hamlib rigctld-compatible TCP server
+│       │   ├── remote/                     # 9G Control: Off / Server / Client, mesh, chat
+│       │   │   ├── RigControlManager.kt    # Owns the mode switch, mesh, sessions, reachability, Hamlib
+│       │   │   ├── RigControlServer.kt     # Hamlib rigctld-compatible TCP server
+│       │   │   ├── RigSessionServer.kt     # Radio side: handshake, lock-out, state/spectrum/audio/data push, commands
+│       │   │   ├── RigSessionClient.kt     # Controller side: handshake, ordered/coalesced commands, watchdog
+│       │   │   ├── RigCrypto.kt            # Access code, PBKDF2 proofs, AES-GCM sealed frames, lock-out
+│       │   │   ├── RigWire.kt              # Link frame format (HELLO/DATA/AUTH/SEALED)
+│       │   │   ├── RigProtocol.kt          # Mirrored settings, commands, validation, message builders
+│       │   │   ├── RigStateReconciler.kt   # Controller side: keeps the user's just-made edits from being undone by a stale radio reading
+│       │   │   ├── RigStreams.kt           # Spectrum quantiser + audio packer (16 kHz mono PCM)
+│       │   │   ├── RigDataCodec.kt         # Decoded AIS/ADS-B/ACARS/APRS/RDS/voice events <-> wire JSON (batched)
+│       │   │   ├── RigDataSource.kt        # Radio side: forwards the DSP engine's decoder output to controllers
+│       │   │   ├── RemoteDecoderFeed.kt    # Controller side: the radio's decoded data as flows the tabs collect
+│       │   │   ├── RigImages.kt            # SSTV/LRPT pictures: row-diff chunk codec, per-controller sender, controller-side feed
+│       │   │   ├── RigMonitor.kt           # The radio's Channel Monitor state <-> wire event (the monitor itself runs on the radio)
+│       │   │   ├── RigHost.kt              # Interfaces the sessions need (host app, transport, listener)
+│       │   │   ├── ViewModelRigHost.kt     # Applies controller commands through MainViewModel setters
+│       │   │   ├── RemoteAudioPlayer.kt    # Plays the radio's audio on the controller
+│       │   │   ├── RigSecrets.kt           # Install id, access codes (Keystore-encrypted)
+│       │   │   ├── MiniJson.kt             # Reflection-free JSON (safe under R8)
+│       │   │   ├── RigLog.kt               # JVM-test-safe logging
+│       │   │   ├── mesh/                   # MeshNetwork (TCP links, beacon, sweep), MeshManager (flooding + chat),
+│       │   │   │                           #   ChatLogic, ChatStore, models — ported from 9GSound
+│       │   │   └── reach/                  # Router port mapping, public-IP, directory + relay — ported from 9GSound
 │       │   ├── recording/
 │       │   │   └── IqRecorder.kt           # IQ to disk (raw/gz/f32)
 │       │   ├── scanner/
 │       │   │   └── FrequencyScanner.kt     # Range + memory scan
+│       │   ├── update/
+│       │   │   ├── UpdateLogic.kt           # Versions, GitHub release parsing, URL trust, when-to-check rules, last-look report model (pure Kotlin, unit-tested)
+│       │   │   ├── UpdateChecker.kt         # Low-priority daily look at the Latest release; cached state; last-look report for the Debug Panel; "Check for new version" switch
+│       │   │   ├── UpdateInstaller.kt       # DownloadManager download + live progress, APK verification, hand-off to the system installer
+│       │   │   └── UpdatePrompt.kt          # The translucent swipe-away / tap-to-update pop-up on the main screen, with download progress bar
 │       │   ├── ui/
 │       │   │   ├── AprsActivity.kt          # APRS station list / packet log
 │       │   │   ├── AdsbActivity.kt          # ADS-B live list, radar scope, map view
@@ -779,7 +988,9 @@ cd 9GRadio
 │       │   │   ├── MainViewModel.kt        # State + commands + per-mode settings
 │       │   │   ├── OtherActivities.kt      # Settings, Recording, Spectrum, ACARS activities
 │       │   │   ├── MemoryActivity.kt       # Memory channels browser
-│       │   │   ├── RigControlSettingsActivity.kt # Rig Control server settings/status card
+│       │   │   ├── RigControlSettingsActivity.kt # 9G Control: Off/Server/Client, radios list, access code, Internet, Hamlib
+│       │   │   ├── ChatActivity.kt / ChatAdapter.kt # Mesh group chat
+│       │   │   ├── JoinLinkActivity.kt     # Handles shared ninegradio://join links
 │       │   │   ├── RtlSdrTestActivity.kt    # USB/tuner connectivity test screen
 │       │   │   ├── ScannerActivity.kt      # Scanner UI
 │       │   │   ├── SMeterView.kt           # Analog S-meter widget
@@ -919,11 +1130,20 @@ different setting choice here.
   decoder's output against a desktop reference — not needed for anything 9GRadio already decodes
   natively and correctly.
 
-### Rig Control
-- Turn on **Server** in Settings → Rig Control and tap **Apply** — leave **Listen port** at the
+### 9G Control — controlling one 9GRadio from another
+1. On the phone with the RTL-SDR: **Settings → 9G Control → Server**. Note the **access code** (tap *Show*).
+2. On the other device: **9G Control → Client**. The radio appears in the list within a few seconds on the
+   same Wi-Fi — tap **Connect**, enter the code once (it can be remembered). The normal tuning, mode, RF and
+   DSP controls now drive the remote radio; its spectrum, meters and audio come back.
+3. For a radio elsewhere on the internet, turn on **Internet access** on both ends. **Disconnect** returns this device's controls to its own receiver.
+4. The chat button on the main screen talks to everyone on the mesh.
+
+### Rig Control — Hamlib (local network only)
+> ⚠️ Rig Control has no access code and no encryption: use it on your own local network (LAN) only, never over the internet.
+- Turn on **Server** under **Rig Control (Hamlib rigctld)** in Settings → 9G Control and tap **Apply** — leave **Listen port** at the
   default `4532` unless it conflicts with something else on your network.
 - Point any Hamlib-aware client (WSJT-X, JTDX, fldigi, Gqrx, SDR++, or plain `rigctl`) at the
-  IP:port shown in the green **CONNECT →** row. Both the **"GQRX"** rig type and the standard
+  this device's IP address and the port you set. Both the **"GQRX"** rig type and the standard
   **"Hamlib NET rigctl / rigctld"** rig type (WSJT-X/JTDX's "Hamlib NET rigctl", fldigi, and
   `rigctl`/`rigctld` itself all use this one) work correctly against 9GRadio.
 - Leave **PTT Method** off in clients like WSJT-X — 9GRadio is receive-only, so use it purely
@@ -932,7 +1152,7 @@ different setting choice here.
   Bluetooth with a Windows A2DP-sink helper and a virtual audio cable — this runs independently
   of the Rig Control TCP connection, so both can be active at once.
 - Turn **Server** off when you're done — Rig Control, like `rigctld` itself, has no
-  authentication, so only run it on networks you trust.
+  authentication or encryption, so only run it on a local network you trust, never over the internet.
 
 ### Background recording / unattended monitoring
 - Enable the **foreground service** wake-lock to survive screen-off.
