@@ -42,3 +42,5 @@ firebase.json
 # Temporary folders
 **/temp/
 **/tmp/
+# Brainstorming mockups
+.superpowers/
