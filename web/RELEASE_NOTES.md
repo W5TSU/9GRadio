@@ -58,8 +58,8 @@ lets you mark a frequency to skip.
 - The RTL-SDR driver hasn't been tested on a real dongle yet.
 - The APRS decoder hasn't been tested on a real over-the-air packet yet.
 - A steady carrier with no audio, such as a radio's own interference, holds the
-  radio until you press Skip. The HackRF Pro has them at 120.000 and 144.085 MHz.
-  Skip each one once.
+  radio until you press Skip. The HackRF Pro used for testing stopped on two, at
+  120.000 and 144.085 MHz. Skip each one once.
 - On FM broadcast, the digital sidebands of HD Radio stations can be logged as
   stations on even tenths, such as 105.2. Skip them.
 - Frequency labels above the spectrum overlap when signals are close together.

@@ -130,5 +130,5 @@ the HackRF default gain from 40 dB, where the samples sat at quantization level,
 
 Still untested on hardware: the RTL-SDR driver, and the APRS decoder on a real
 packet (none were heard in 3 minutes on 144.390). The radio also stops on steady
-carriers with no audio, such as 120.000 and 144.085 MHz on the HackRF Pro. Under the
-stop rule these hold the radio until Skip.
+carriers with no audio, such as 120.000 and 144.085 MHz on the HackRF Pro used for
+testing. Under the stop rule these hold the radio until Skip.
